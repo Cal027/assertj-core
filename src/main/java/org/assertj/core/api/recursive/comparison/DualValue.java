@@ -19,6 +19,7 @@ import static org.assertj.core.util.Arrays.isArray;
 import static org.assertj.core.util.Lists.newArrayList;
 import static org.assertj.core.util.Strings.join;
 
+import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +60,8 @@ final class DualValue {
   public boolean equals(Object other) {
     if (!(other instanceof DualValue)) return false;
     DualValue that = (DualValue) other;
+    // it is critical to compare by reference when tracking visited dual values.
+    // see should_fix_1854_minimal_test for an explanation
     return actual == that.actual && expected == that.expected;
   }
 
@@ -166,11 +169,16 @@ final class DualValue {
   }
 
   public boolean isActualFieldAnIterable() {
-    return actual instanceof Iterable;
+    // ignore Path to be consistent with isExpectedFieldAnIterable
+    return actual instanceof Iterable && !(actual instanceof Path);
   }
 
   public boolean isExpectedFieldAnIterable() {
-    return expected instanceof Iterable;
+    // Don't consider Path as an Iterable as recursively comparing them leads to a stack overflow, here's why:
+    // Iterable are compared element by element recursively
+    // Ex: /tmp/foo.txt path has /tmp as its first element
+    // so /tmp is going to be compared recursively but /tmp first element is itself leading to an infinite recursion
+    return expected instanceof Iterable && !(expected instanceof Path);
   }
 
   private static boolean isAnOrderedCollection(Object value) {
@@ -204,6 +212,20 @@ final class DualValue {
     List<String> fieldPath = newArrayList(parentPath);
     fieldPath.add(fieldName);
     return fieldPath;
+  }
+
+  public boolean hasPotentialCyclingValues() {
+    return isPotentialCyclingValue(actual) && isPotentialCyclingValue(expected);
+  }
+
+  private static boolean isPotentialCyclingValue(Object object) {
+    if (object == null) return false;
+    // java.lang are base types that can't cycle to themselves of other types
+    // we could check more type, but that's a good start
+    String canonicalName = object.getClass().getCanonicalName();
+    // canonicalName is null for anonymous and local classes, return true as they can cycle back to other objects.
+    if (canonicalName == null) return true;
+    return !canonicalName.startsWith("java.lang");
   }
 
 }
